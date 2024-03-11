@@ -1,0 +1,331 @@
+# TKJ-harjoitustyö 2023, Fibonacci in Assembly Y86
+# Janne Rautakorpi
+
+# Reflection:
+# I used some optimizations for few operations. For example, I used add operations for left bit shifting and
+# I found an efficient algorithm for right bitshift at StackOverflow.com. Link to the source is in the documentation comment
+# of the right bitshift section. I also used little optimization when I wanted to set a register value to zero.
+# Instead of irmovq'ing it to zero, it's more efficient to xorq with the register itself.
+# Easily the biggest optimization in this code was the right bit shift. Regular bitshifting by diving by 2
+# was very slow and took large amount of steps. 
+
+
+# This .pos 0 is copied from Lovelace. Test numbers.
+.pos 0
+#   irmovq numbers, %r11
+#   irmovq $3, %r12    
+#   rmmovq %r11, (%r11)
+#   irmovq $5, %r12    
+#   rmmovq %r11, 8(%r11)
+#   irmovq $8, %r12        
+#   rmmovq %r11, 16(%r11)
+#   irmovq $0, %r12
+#   rmmovq %r11, 24(%r11)
+
+   
+Main:
+	irmovq stack, %rsp			# stack initialization
+	irmovq stack, %rbp
+	irmovq variables, %rsi		# auxiliary variables and results in memory
+	call Fibonacci				
+	halt
+
+Fibonacci:
+	mrmovq (%r11), %rax			# number from given list
+	mrmovq (%rsi), %rcx			# number 8 to move pointer
+	addq %rcx, %r11				# move to next number (in advance for next iteration)
+	rmmovq %rax, 64(%rsi)		# number to memory. Used in perfect square
+	irmovq $0, %rcx				# auxiliary variable to check if list ends
+	subq %rcx, %rax
+	jne firstStep				# number was positive
+	ret
+	
+firstStep:
+	rmmovq %rax, 40(%rsi)		# move our multiplicand (the number) to memory
+	rmmovq %rax, 48(%rsi)		# same procedure, but multiplier
+	call Multiplication			# %rax = num * num
+	
+	irmovq $5, %rcx
+	rmmovq %rcx, 40(%rsi)		# multiplicand = 5
+	rmmovq %rax, 48(%rsi)		# multiplier = x*x
+	call Multiplication			# %rax = 5*x*x
+	
+	irmovq $4, %rcx
+	addq %rcx, %rax				# %rax = 5*x*x + 4 = pSqrt
+	rmmovq %rax, 24(%rsi)		# pSqrt = %rax
+
+	irmovq $8, %rcx
+	subq %rcx, %rax				# %rax = 5*x*x - 4 = pSqrt - 8
+	rmmovq %rax, 32(%rsi)		# pSqrt - 8
+	
+	
+	call setRegistersToZero		# this helps me to keep track of registers that I use
+	
+								# Now we have 5*x*x + 4 and 5*x*x - 4 [24(%rsi) and 32(%rsi)]
+								# Let's first call PerfectSquare for the first  number.
+	
+	mrmovq 24(%rsi), %r12		# pSqrt -> %r12
+	call PerfectSquare
+	call checkTrue
+	call setRegistersToZero
+	
+	mrmovq 32(%rsi), %r12		# pSqrt - 8 -> %r12
+	call PerfectSquare
+	call checkTrue
+	call setRegistersToZero
+	
+	jmp Fibonacci
+	
+checkTrue:
+	irmovq $1, %rax				# auxiliary variable
+	irmovq $0, %rax				# aux. var.
+	mrmovq 72(%rsi), %rcx		# return value of isPerfectSquare. 1 true, 0 false
+	
+	subq %rax, %rcx				# if (s == x*x)
+	jne notFibFound
+	ret
+	
+notFibFound:					# NON-fibonacci number found
+	halt
+
+PerfectSquare:
+	call Sqrt					# Sqrt(%r12) = %rcx
+	rmmovq %rcx, 8(%rsi)		# "int s" in given C code
+	
+								# now let's calculate s*s
+	rrmovq %rcx, %r11			# multiplicand
+	rrmovq %rcx, %r12			# multiplier
+	
+	call Multiplication			# return in %rax
+	
+	rmmovq %rax, 16(%rsi)		# s*s
+	
+	irmovq $1, %rbx				# possible results for x == s*s
+	irmovq $0, %rdx				# same thing
+	
+	mrmovq 64(%rsi), %rax		# variable x in the C code. Given as an argument for isPerfectSquare
+	mrmovq 16(%rsi), %rcx		# s*s
+	subq %rcx, %rax				# if statement
+	cmove %rbx, %rax			# they were equal, set %rax to 1
+	cmovne %rdx, %rax			# not equal, %rax to 0
+	
+	rmmovq %rax, 72(%rsi)		# this can be seen as the return value of isPerfectSquare function
+	
+	call setRegistersToZero
+	ret
+	
+	
+# Set auxiliary registers to zero.
+setRegistersToZero:
+	xorq %rax, %rax
+	xorq %rcx, %rcx
+	xorq %rbx, %rbx
+	xorq %rdx, %rdx
+	ret
+	
+# ####################### #
+# MULTIPLICATION FUNCTION #
+# ####################### #	
+
+# Input: %rdi, %r12
+# Output: %rax
+Multiplication:
+    
+    irmovq bitArray, %r8			# bitArray is a lookup table
+    irmovq $0, %r13
+    irmovq $8, %r10         		# constant to move memory pointer
+    irmovq $1, %r14
+    
+	mrmovq 40(%rsi), %rdi			# multiplicand
+	mrmovq 48(%rsi), %r12			# multiplier
+	
+    #irmovq $4, %rdi        		# test input for debugging
+    #irmovq $6, %r12        		# test input resulted correct values
+
+	loop:
+		mrmovq (%r8), %r9			# bitArray value to %r9
+		andq %rdi, %r9
+		subq %r13, %r9
+		jne siirto
+
+		irmovq $8, %r10         	# reset %r10 back to 8
+		addq %r10, %r8
+		mrmovq (%r8), %r9
+		addq %r14, %rbx
+		subq %r13, %r9
+		je return
+		jmp loop
+
+	siirto:
+		subq %r14, %r9              # subtract 1 from %r9
+		rrmovq %r12, %rcx           # %r12 -> %rcx to move bit
+		rrmovq %rbx, %r10
+		call Lshift					# shift to left
+		addq %rcx, %rax
+		irmovq $8, %r10             # reset %r10 back to value 8
+		addq %r10, %r8
+		addq %r14, %rbx
+		jmp loop
+
+	# %rax <<= %r10
+	Lshift:
+		subq %r13, %r10
+		jne Shiftloop
+		ret
+		Shiftloop:
+			addq %rcx, %rcx     	# bitshift to left by one
+			subq %r14, %r10			# subtract 1 from %r10
+			jmp Lshift
+
+	return:
+		ret
+	
+# ############# #
+# SQRT FUNCTION	#
+# ############# #
+
+# Input %r12
+# Output %rcx
+Sqrt:
+	irmovq $0, %rcx         		# result variable
+	irmovq $0, %r13
+	irmovq $1, %r10					# used in right bit shift
+	irmovq $65536, %r8      		# 1 << 16 "bit"
+    
+	firstWhile:
+		rrmovq %r8, %rdi
+		rrmovq %r8, %r9
+		rrmovq %r12, %r14
+		subq %r14, %r9
+		jg useRight
+	
+	square:
+		rrmovq %r8, %r9
+		subq %r13, %r9
+		jne squareLoop
+		ret
+		
+	squareLoop:
+		rrmovq %r12, %r14
+		rrmovq %r8, %rdx
+		addq %rcx, %rdx
+		subq %rdx, %r14
+	
+		jge ifTrue
+		jmp else
+	
+	useRight:
+		irmovq $2, %rbx
+		rrmovq %r8, %rdx
+		call shiftRight
+		rrmovq %r9, %r8
+		jmp firstWhile
+		
+	ifTrue:
+		rrmovq %r8, %r14
+		addq %rcx, %r14
+		subq %r14, %r12
+		call setupShift1
+		addq %r8, %r14
+		rrmovq %r14, %rcx
+		call setupShift2
+		jmp square
+
+	else:
+		call setupShift1
+		rrmovq %r14, %rcx
+		call setupShift2
+		rrmovq %r9, %r8
+		ret
+		
+	setupShift1:
+		irmovq $1, %rbx
+		rrmovq %rcx, %rdx
+		call shiftRight
+		rrmovq %r9, %r8
+		ret
+		
+	setupShift2:
+		irmovq $2, %rbx
+		rrmovq %r8, %rdx
+		call shiftRight
+		rrmovq %r9, %r8         	# return to %r8
+		jmp firstWhile
+		
+	# NEXT BITSHIFT ALGORITHM WAS TAKEN FROM STACKOVERFLOW.
+	# https://stackoverflow.com/questions/55539625/how-to-perform-right-shift-in-y86-64-or-other-toy-isas-with-add-and-but-no-na
+	# I translated the algorithm to working y86 syntax.
+	shiftRight:
+		xorq %r9, %r9				# set %r9 to zero
+		irmovq $64, %r11
+		subq %rbx, %r11				# %rbx is the amount of bitshifting
+		rshift:
+			addq %r9, %r9			# bitshift to left by one
+			andq %rdx, %rdx
+			jge msbZero
+			xorq %r10, %r9
+			
+		msbZero:
+			addq %rdx, %rdx
+			subq %r10, %r11
+			jne rshift
+			ret
+		
+.pos 0x200
+stack:
+
+.pos 0x700
+array:
+
+.pos 0x1800
+.align 8
+variables:
+	.quad 0x8				# +8 to move pointers
+	.quad 0x0				# sqrt result (variable s)			8
+	.quad 0x0				# s*s (used in isPerfectSquare)		16
+	.quad 0x0				# 5*x*x + 4 (call this pSqrt)		24
+	.quad 0x0				# 5*x*x - 4 = same as pSqrt - 8		32
+	.quad 0x0				# multiplicand						40
+	.quad 0x0				# multiplier						48
+	.quad 0x0				# result of statement s*s == x		56
+	.quad 0x0				# number in inspection				64
+	.quad 0x0				# result of perfectSquare (1=equal)	72
+
+.pos 0x1200
+.align 8
+bitArray:                   # bitArray a.k.a lookup table. Used for multiplication
+    .quad 0x1               # 2^0
+    .quad 0x2               # 2^1
+    .quad 0x4               # etc..
+    .quad 0x8
+    .quad 0x10
+    .quad 0x20
+    .quad 0x40
+    .quad 0x80
+    .quad 0x100
+    .quad 0x200
+    .quad 0x400
+    .quad 0x800
+    .quad 0x1000
+    .quad 0x2000
+    .quad 0x4000
+    .quad 0x8000
+    .quad 0x10000
+    .quad 0x20000
+    .quad 0x40000
+    .quad 0x80000
+    .quad 0x100000
+    .quad 0x200000
+    .quad 0x400000
+    .quad 0x800000
+    .quad 0x1000000
+    .quad 0x2000000
+    .quad 0x4000000
+    .quad 0x8000000
+    .quad 0x10000000
+    .quad 0x20000000
+    .quad 0x40000000
+    .quad 0x80000000
+	.quad 0x100000000
+	.quad 0x200000000
+	
